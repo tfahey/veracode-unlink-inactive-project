@@ -42,6 +42,7 @@ apps_with_one_GUID = []
 apps_with_multiple_GUIDs = []
 updated_linked_apps = []
 live_mode = False
+account_ID = "11495"
 
 def main():
 
@@ -58,26 +59,13 @@ def main():
     # CHECK FOR CREDENTIALS EXPIRATION
     creds_expire_days_warning()
 
-    # with open('att_linked_projects_2.csv', newline='') as appsfile:
-    #     data = list(csv.reader(appsfile))
-    #
-    # print(data)
-
-    # print("There are", len(data), "applications.")
-
     # open the linked projects file for reading -
-    print("Opening the linkedapps file")
-    linkedapps_file = open('att_linked_projects_2.csv', newline='')
-    # open the legacy apps file for reading -
-    # legacyapps_file = open('AT&T_Apps.csv', newline='')
+    logprint("Opening the linked_projects file")
+    linked_projects_file = open('linked_projects.csv', newline='')
 
-    # create a dictReader object for the linkedapps file
+    # create a dictReader object for the linked_projects file
     # note - the CSV must have column headings in top row
-    linkedapps_reader = csv.DictReader(linkedapps_file)
-
-    # create a dictReader object for the legacyapps file
-    # note - the CSV must have column headings in top row
-    # legacyapps_reader = csv.DictReader(legacyapps_file)
+    linked_projects_reader = csv.DictReader(linked_projects_file)
 
     matchCount = 0
     apps_wrong_account = 0
@@ -87,15 +75,17 @@ def main():
 
     loop_start_time = timeit.default_timer()
 
-    for this_linked_app in linkedapps_reader:
+    for this_linked_app in linked_projects_reader:
         # print(this_app['app_name'], this_app['project_name'], this_app['workspace_name'])
         app_name = this_linked_app['app_name']
         project_guid = this_linked_app['project_guid']
         # print("Application name: " + app_name + ", Linked SCA Project GUID: " + project_guid)
         # app_guid = Applications().get_by_name(app_name)  # process this carefully, it returns a list
 
-        # print("Opening the legacyapps file")
-        legacyapps_file = open('AT&T_Apps.csv', newline='')
+        # logprint("Opening the legacyapps file")
+        legacyapps_file = open('Apps.csv', newline='')
+        # create a dictReader object for the legacyapps file
+        # note - the CSV must have column headings in top row
         legacyapps_reader = csv.DictReader(legacyapps_file)
 
         for this_legacy_app in legacyapps_reader:
@@ -120,28 +110,12 @@ def main():
             # else:
             #     print("no match between " + app_name + " and " + legacy_app_name)
 
-        # printing the list using loop
-        # print("For Application name " + app_name + " the App GUID list has " + str(len(app_guid)) + " items")
-        # if len(app_guid) == 0:
-        #     deleted_apps.append(this_linked_app)
-        # elif len(app_guid) == 1:
-        #     apps_with_one_GUID.append(this_linked_app)
-        # else:
-        #     apps_with_multiple_GUIDs.append(this_linked_app)
-        # for x in range(len(app_guid)):
-        #     print(app_guid[x])
-        # print("Application GUID: " + app_guid)
-
     # Measure the elapsed time for the double nested loops
     loop_end_time = timeit.default_timer()
     loop_elapsed_time = loop_end_time - loop_start_time
 
-    # Print the number of updated linked_apps (each is a dictionary of key:value pairs)
-    # print("The number of updated linked apps is " + str(len(updated_linked_apps)))
-    # print("row 0: " + str(updated_linked_apps[0]))
-
     print("Closing the linkedapps file")
-    linkedapps_file.close()
+    linked_projects_file.close()
 
     print("There are " + str(matchCount) + " application profiles with legacy ID")
 
@@ -159,7 +133,7 @@ def main():
 
         # Verify that the application profile is owned by the correct account ID.
         # If not, print and log a message, and break out of the loop for this application.
-        if "11495" != this_app["ACCOUNT_ID"]:
+        if account_ID != this_app["ACCOUNT_ID"]:
             log_message = "Warning!! Application ", this_app["app_name"], " is owned by account id ", this_app["ACCOUNT_ID"], " and will be skipped!""Warning!! Application ", this_app["app_name"], " is owned by account id ", this_app["ACCOUNT_ID"], " and will be skipped!"
             logprint(log_message)
             apps_wrong_account = apps_wrong_account + 1
@@ -179,7 +153,7 @@ def main():
             if key == "_embedded":
                 if len(app_info["_embedded"]["applications"]) != 1:
                     print("WARNING! There are " + str(len(app_info["_embedded"]["applications"])) + " apps for guid!")
-                print("app_info guid: " + app_info["_embedded"]["applications"][0]["guid"])
+                logprint("The app guid is: " + app_info["_embedded"]["applications"][0]["guid"] + " and the project guid is: " + project_guid)
                 # print("app_info: " + str(app_info["_embedded"]["applications"][0]))
 
                 # The Applications API found a matching application profile for this legacy_id
