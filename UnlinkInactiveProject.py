@@ -42,7 +42,8 @@ apps_with_one_GUID = []
 apps_with_multiple_GUIDs = []
 updated_linked_apps = []
 live_mode = False
-account_ID = "11495"
+# Insert your Veracode account ID here
+account_ID = "00000"
 
 def main():
 
