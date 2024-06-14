@@ -1,0 +1,5 @@
+veracode-api-py>=0.9.47
+logging-formatter-anticrlf>=1.2
+Pygments >= 2.9.0
+lxml==4.9.3
+veracode-api-signing >= 22.3.0

@@ -32,260 +32,28 @@ def creds_expire_days_warning():
         # print(creds)
 
 
-def prompt_for_app(prompt_text):
-    appguid = ""
-    app_name_search = input(prompt_text)
-    app_candidates = Applications().get_by_name(app_name_search)
-    if len(app_candidates) == 0:
-        print("No matches were found!")
-    elif len(app_candidates) > 1:
-        print("Please choose an application:")
-        for idx, appitem in enumerate(app_candidates, start=1):
-            print("{}) {}".format(idx, appitem["profile"]["name"]))
-        i = input("Enter number: ")
-        try:
-            if 0 < int(i) <= len(app_candidates):
-                appguid = app_candidates[int(i) - 1].get('guid')
-        except ValueError:
-            appguid = ""
-    else:
-        appguid = app_candidates[0].get('guid')
-
-    return appguid
-
-
-def get_app_guid_from_legacy_id(app_id):
-    app = Applications().get(legacy_id=app_id)
-    if app is None:
-        return
-    return app['_embedded']['applications'][0]['guid']
-
-
-def get_application_name(guid):
-    app = Applications().get(guid)
-    return app['profile']['name']
-
-
-def get_findings_by_type(app_guid, scan_type='STATIC', sandbox_guid=None):
-    findings = []
-    if scan_type == 'STATIC':
-        findings = Findings().get_findings(app_guid, scantype=scan_type, annot='TRUE', sandbox=sandbox_guid)
-    elif scan_type == 'DYNAMIC':
-        findings = Findings().get_findings(app_guid, scantype=scan_type, annot='TRUE')
-
-    return findings
-
-
 def logprint(log_msg):
     log.info(log_msg)
     print(log_msg)
-
-
-def filter_approved(findings, id_list):
-    if id_list is not None:
-        log.info('Only copying the following findings provided in id_list: {}'.format(id_list))
-        findings = [f for f in findings if f['issue_id'] in id_list]
-
-    return [f for f in findings if (f['finding_status']['resolution_status'] == 'APPROVED')]
-
-
-def filter_proposed(findings, id_list):
-    if id_list is not None:
-        log.info('Only copying the following findings provided in id_list: {}'.format(id_list))
-        findings = [f for f in findings if f['issue_id'] in id_list]
-
-    return [f for f in findings if (f['finding_status']['resolution_status'] == 'PROPOSED')]
-
-
-def format_file_path(file_path):
-    # special case - omit prefix for teamcity work directories, which look like this:
-    # teamcity/buildagent/work/d2a72efd0db7f7d7
-    if file_path is None:
-        return ''
-
-    suffix_length = len(file_path)
-
-    buildagent_loc = file_path.find('teamcity/buildagent/work/')
-
-    if buildagent_loc > 0:
-        # strip everything starting with this prefix plus the 17 characters after
-        # (25 characters for find string, 16 character random hash value, plus / )
-        formatted_file_path = file_path[(buildagent_loc + 42):suffix_length]
-    else:
-        formatted_file_path = file_path
-
-    return formatted_file_path
-
-
-def create_match_format_policy(app_guid, sandbox_guid, policy_findings, finding_type):
-    findings = []
-
-    if finding_type == 'STATIC':
-        thesefindings = [{'app_guid': app_guid,
-                          'sandbox_guid': sandbox_guid,
-                          'id': pf['issue_id'],
-                          'resolution': pf['finding_status']['resolution'],
-                          'cwe': pf['finding_details']['cwe']['id'],
-                          'procedure': pf['finding_details'].get('procedure'),
-                          'relative_location': pf['finding_details'].get('relative_location'),
-                          'source_file': format_file_path(pf['finding_details'].get('file_path')),
-                          'line': pf['finding_details'].get('file_line_number'),
-                          'finding': pf} for pf in policy_findings]
-        findings.extend(thesefindings)
-    elif finding_type == 'DYNAMIC':
-        thesefindings = [{'app_guid': app_guid,
-                          'id': pf['issue_id'],
-                          'resolution': pf['finding_status']['resolution'],
-                          'cwe': pf['finding_details']['cwe']['id'],
-                          'path': pf['finding_details']['path'],
-                          'vulnerable_parameter': pf['finding_details'].get('vulnerable_parameter', ''),
-                          # vulnerable_parameter may not be populated for some info leak findings
-                          'finding': pf} for pf in policy_findings]
-        findings.extend(thesefindings)
-    return findings
-
-
-def format_application_name(guid, app_name, sandbox_guid=None):
-    if sandbox_guid is None:
-        formatted_name = 'application {} (guid: {})'.format(app_name, guid)
-    else:
-        formatted_name = 'sandbox {} in application {} (guid: {})'.format(sandbox_guid, app_name, guid)
-    return formatted_name
-
-
-def update_mitigation_info_rest(to_app_guid, flaw_id, action, comment, sandbox_guid=None, propose_only=False):
-    # validate length of comment argument, gracefully handle overage
-    if len(comment) > 2048:
-        comment = comment[0:2048]
-
-    if action == 'CONFORMS' or action == 'DEVIATES':
-        log.warning('Cannot copy {} mitigation for Flaw ID {} in {}'.format(action, flaw_id, to_app_guid))
-        return
-    elif action == 'APPROVED' or action == 'PROPOSED':
-        if propose_only:
-            log.info('propose_only set to True; skipping applying approval for flaw_id {}'.format(flaw_id))
-            return
-        action = Constants.ANNOT_TYPE[action]
-    flaw_id_list = [flaw_id]
-    if sandbox_guid == None:
-        Findings().add_annotation(to_app_guid, flaw_id_list, comment, action)
-    else:
-        Findings().add_annotation(to_app_guid, flaw_id_list, comment, action, sandbox=sandbox_guid)
-    log.info(
-        'Updated mitigation information to {} for Flaw ID {} in {}'.format(action, str(flaw_id_list), to_app_guid))
-
-
-def set_in_memory_flaw_to_approved(findings_to, to_id):
-    # use this function to update the status of target findings in memory, so that, if it is found
-    # as a match for multiple flaws, we only copy the mitigations once.
-    for finding in findings_to:
-        if all(k in finding for k in ("id", "finding")):
-            if (finding["id"] == to_id):
-                finding['finding']['finding_status']['resolution_status'] = 'APPROVED'
-
-
-def set_in_memory_flaw_to_proposed(findings_to, to_id):
-    # use this function to update the status of target findings in memory, so that, if it is found
-    # as a match for multiple flaws, we only copy the mitigations once.
-    for finding in findings_to:
-        if all(k in finding for k in ("id", "finding")):
-            if (finding["id"] == to_id):
-                finding['finding']['finding_status']['resolution_status'] = 'PROPOSED'
-
-
-def match_for_scan_type(from_app_guid, to_app_guid, dry_run, scan_type='STATIC', from_sandbox_guid=None,
-                        to_sandbox_guid=None, propose_only=False, id_list=[], fuzzy_match=False):
-    results_from_app_name = get_application_name(from_app_guid)
-    formatted_from = format_application_name(from_app_guid, results_from_app_name, from_sandbox_guid)
-    logprint('Getting {} findings for {}'.format(scan_type.lower(), formatted_from))
-    findings_from = get_findings_by_type(from_app_guid, scan_type=scan_type, sandbox_guid=from_sandbox_guid)
-    count_from = len(findings_from)
-    logprint('Found {} {} findings in "from" {}'.format(count_from, scan_type.lower(), formatted_from))
-    if count_from == 0:
-        return 0  # no source findings to copy!
-
-    findings_from_approved = filter_approved(findings_from, id_list)
-    findings_from_proposed = filter_proposed(findings_from, id_list)
-
-    if len(findings_from_approved) == 0:
-        logprint('No approved findings in "from" {}. Exiting.'.format(formatted_from))
-    elif len(findings_from_proposed) == 0:
-        logprint('No proposed findings in "from" {}. Exiting.'.format(formatted_from))
-        return 0
-
-    results_to_app_name = get_application_name(to_app_guid)
-    formatted_to = format_application_name(to_app_guid, results_to_app_name, to_sandbox_guid)
-
-    logprint('Getting {} findings for {}'.format(scan_type.lower(), formatted_to))
-    findings_to = get_findings_by_type(to_app_guid, scan_type=scan_type, sandbox_guid=to_sandbox_guid)
-    count_to = len(findings_to)
-    logprint('Found {} {} findings in "to" {}'.format(count_to, scan_type.lower(), formatted_to))
-    if count_to == 0:
-        return 0  # no destination findings to mitigate!
-
-    # CREATE LIST OF UNIQUE VALUES FOR BUILD COPYING TO
-    copy_array_to = create_match_format_policy(app_guid=to_app_guid, sandbox_guid=to_sandbox_guid,
-                                               policy_findings=findings_to, finding_type=scan_type)
-
-    # We'll return how many mitigations we applied
-    counter = 0
-
-    # look for a match for each finding in the TO list and apply mitigations of the matching flaw, if found
-    for this_to_finding in findings_to:
-        to_id = this_to_finding['issue_id']
-
-        if this_to_finding['finding_status']['resolution_status'] == 'APPROVED':
-            logprint('Flaw ID {} in {} already has an accepted mitigation; skipped.'.format(to_id, formatted_to))
-            continue
-        elif this_to_finding['finding_status']['resolution_status'] == 'PROPOSED':
-            logprint('Flaw ID {} in {} already has a proposed mitigation; skipped.'.format(to_id, formatted_to))
-            continue
-
-        match = Findings().match(this_to_finding, findings_from, approved_matches_only=False,
-                                 allow_fuzzy_match=fuzzy_match)
-
-        if match == None:
-            log.info('No approved or proposed match found for finding {} in {}'.format(to_id, formatted_from))
-            continue
-
-        from_id = match.get('id')
-
-        log.info(
-            'Source flaw {} in {} has a possible target match in flaw {} in {}.'.format(from_id, formatted_from, to_id,
-                                                                                        formatted_to))
-        mitigation_list = ''
-        if match['finding'].get('annotations') == None:
-            logprint('{} annotations for flaw ID {} in {}...'.format(len(mitigation_list), to_id, formatted_to))
-        else:
-            mitigation_list = match['finding']['annotations']
-            logprint(
-                'Applying {} annotations for flaw ID {} in {}...'.format(len(mitigation_list), to_id, formatted_to))
-
-        for mitigation_action in reversed(mitigation_list):  # findings API puts most recent action first
-            proposal_action = mitigation_action['action']
-            proposal_comment = '(COPIED FROM APP {}) {}'.format(from_app_guid, mitigation_action['comment'])
-            if not (dry_run):
-                update_mitigation_info_rest(to_app_guid, to_id, proposal_action, proposal_comment, to_sandbox_guid,
-                                            propose_only)
-
-        set_in_memory_flaw_to_approved(copy_array_to, to_id)  # so we don't attempt to mitigate approved finding twice
-        set_in_memory_flaw_to_proposed(copy_array_to, to_id)  # so we don't attempt to mitigate proposed finding twice
-        counter += 1
-
-    print('[*] Updated {} flaws in {}. See log file for details.'.format(str(counter), formatted_to))
 
 
 deleted_apps = []
 apps_with_one_GUID = []
 apps_with_multiple_GUIDs = []
 updated_linked_apps = []
-
+live_mode = False
 
 def main():
 
     setup_logger()
 
     logprint('======== beginning UnlinkInactiveProject.py run ========')
+
+    # check for trial mode
+    if live_mode:
+        logprint("running in live mode")
+    else:
+        logprint("running in trial mode")
 
     # CHECK FOR CREDENTIALS EXPIRATION
     creds_expire_days_warning()
@@ -312,6 +80,11 @@ def main():
     # legacyapps_reader = csv.DictReader(legacyapps_file)
 
     matchCount = 0
+    apps_wrong_account = 0
+    apps_not_found = 0
+    apps_unlinked = 0
+    apps_skipped = 0
+
     loop_start_time = timeit.default_timer()
 
     for this_linked_app in linkedapps_reader:
@@ -328,11 +101,14 @@ def main():
         for this_legacy_app in legacyapps_reader:
             legacy_app_name = this_legacy_app["APP_NAME"]
             legacy_app_id = this_legacy_app["APP_ID"]
+            legacy_account_id = this_legacy_app["ACCOUNT_ID"]
             # print("trying to match" + app_name + " with " + legacy_app_name)
             if app_name == legacy_app_name:
                 # print("Match on Application Name: " + app_name + ", capturing legacy APP_ID: " + legacy_app_id)
                 this_linked_app["APP_ID"] = legacy_app_id
-                # print(this_linked_app)
+                this_linked_app["ACCOUNT_ID"] = legacy_account_id
+                # print("This legacy app: ", this_legacy_app)
+                # print("This linked app: ", this_linked_app)
                 updated_linked_apps.append(this_linked_app)
                 matchCount = matchCount + 1
 
@@ -373,10 +149,26 @@ def main():
     answer = ""
 
     for this_app in updated_linked_apps:
+
+        # Initialize the application_found Boolean for this legacy_id
+        application_found = False
+
         legacy_id = int(this_app["APP_ID"])
         project_guid = this_app["project_guid"]
         project_name = this_app["project_name"]
+
+        # Verify that the application profile is owned by the correct account ID.
+        # If not, print and log a message, and break out of the loop for this application.
+        if "11495" != this_app["ACCOUNT_ID"]:
+            log_message = "Warning!! Application ", this_app["app_name"], " is owned by account id ", this_app["ACCOUNT_ID"], " and will be skipped!""Warning!! Application ", this_app["app_name"], " is owned by account id ", this_app["ACCOUNT_ID"], " and will be skipped!"
+            logprint(log_message)
+            apps_wrong_account = apps_wrong_account + 1
+            continue
+
+        logprint("Calling Applications API for app name" + this_app["app_name"] + " with legacy id " + str(legacy_id))
         app_info = Applications().get(legacy_id=legacy_id)
+
+        # logprint(str(app_info))
 
         # print("app_info keys: ")
 
@@ -389,36 +181,40 @@ def main():
                     print("WARNING! There are " + str(len(app_info["_embedded"]["applications"])) + " apps for guid!")
                 print("app_info guid: " + app_info["_embedded"]["applications"][0]["guid"])
                 # print("app_info: " + str(app_info["_embedded"]["applications"][0]))
+
+                # The Applications API found a matching application profile for this legacy_id
+                application_found = True
+
                 application_name = app_info["_embedded"]["applications"][0]["profile"]["name"]
+
+                # answer == "x" means stop prompting
                 if answer != "x":
                     answer = input("About to unlink SCA project " + project_name + " from Application " + application_name + " Are you sure?y/n/x:")
                     print("you answered " + answer)
-                if answer != "n":
-                    print("Unlinking SCA project " + project_name + " from Application " + application_name)
-                # SCAApplications().unlink_project(app_info["guid"], project_guid)
+                if live_mode and (answer == "y" or answer == "x"):
+                    logprint("Unlinking SCA project " + project_name + " from Application " + application_name)
+                    logprint("Running in live mode - this project will be unlinked")
+                    apps_unlinked = apps_unlinked + 1
+                    # SCAApplications().unlink_project(app_info["guid"], project_guid)
+                else:
+                    logprint("Skipping Unlinking SCA project " + project_name + " from Application " + application_name)
+                    apps_skipped = apps_skipped + 1
+
+        if not application_found:
+            logprint("Warning!! Applications API did not find an application with app name" + this_app["app_name"] + " with legacy id " + str(legacy_id))
+            apps_not_found = apps_not_found + 1
 
     # Measure the elapsed time for the API calls
     api_end_time = timeit.default_timer()
     api_elapsed_time = api_end_time - api_start_time
 
-    # print("There are " + str(len(deleted_apps)) + " deleted application profiles")
-    # print("There are " + str(len(apps_with_one_GUID)) + " application profiles that exactly match the application name")
-    # print("There are " + str(len(apps_with_multiple_GUIDs)) + " application profiles that dont exactly match")
-
-    # make a new variable - apps - for Python's CSV reader object -
-    # apps = csv.reader(appsfile)
-
-    # read whatever you want from the reader object
-    # print it or use it any way you like
-    # for this_app in apps:
-    #     print("Application name: " + this_app[0] + ", Linked SCA Project Name: " + this_app[1])
-    # print(this_app[1])
-
-    # save and close the file
-    # appsfile.close()
-
-    print("The double nested loop took " + str(loop_elapsed_time) + " seconds")
-    print("The API calls loop took " + str(api_elapsed_time) + " seconds, or " + str(api_elapsed_time/60.) + " minutes")
+    logprint(str(matchCount) + " applications profiles were matched by legacy ID")
+    logprint(str(apps_wrong_account) + " applications were skipped because the account id was incorrect.")
+    logprint(str(apps_not_found) + " applications were skipped because the Applications API did not find them.")
+    logprint(str(apps_unlinked) + " applications were successfully unlinked.")
+    logprint(str(apps_skipped) + " applications were skipped because the account id was incorrect.")
+    logprint("The double nested loop took " + str(loop_elapsed_time) + " seconds")
+    logprint("The API calls loop took " + str(api_elapsed_time) + " seconds, or " + str(api_elapsed_time/60.) + " minutes")
     logprint('======== ending UnlinkInactiveProject.py run ========')
 
 
